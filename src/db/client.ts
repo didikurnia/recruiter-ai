@@ -7,9 +7,17 @@ import { logger } from '../logger'
 export const pool = new Pool({ connectionString: env.DATABASE_URL })
 
 export async function runMigrations(): Promise<void> {
+  // pgvector is optional — app still works without it (job-lookup falls back gracefully)
+  try {
+    await pool.query('CREATE EXTENSION IF NOT EXISTS vector')
+    logger.info({ event: 'pgvector_extension_enabled' })
+  } catch (err) {
+    logger.warn({ event: 'pgvector_extension_unavailable', err: (err as Error).message,
+      hint: 'Install pgvector on the PostgreSQL server or use the pgvector/pgvector Docker image' })
+  }
+
   const migrationsDir = join(import.meta.dir, 'migrations')
 
-  // Read all .sql files sorted alphabetically (001_, 002_, ...)
   const files = readdirSync(migrationsDir)
     .filter((f) => f.endsWith('.sql'))
     .sort((a, b) => a.localeCompare(b))

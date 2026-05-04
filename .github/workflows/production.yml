@@ -1,0 +1,96 @@
+name: Deploy Recruitment AI on Production
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      
+      - name: Install dependencies
+        run: bun install 
+      
+      # - name: Type-check
+      #   run: bun tsc --noEmit
+
+      # - name: Run ESLint
+      #   run: bun run lint 
+
+      # - name: Run Unit Tests
+      #   run: bun run test:ci 
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Inject .env Configuration
+        env:
+          ENV_FILE: ${{ secrets.ENV_PRODUCTION }}
+        run: |
+          echo $ENV_FILE | tr " " "\n" >> .env
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESSKEY }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESSKEY }}
+          aws-region: ${{ secrets.AWS_REGION_SIN }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          mask-password: 'true'
+
+      - name: Build, tag, and push image to Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: recruitment-ai
+          IMAGE_TAG: latest
+        run: |
+          docker build -t $ECR_REPOSITORY .
+          docker tag $ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESSKEY }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESSKEY }}
+          aws-region: ${{ secrets.AWS_REGION_SIN }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          mask-password: 'true'    
+
+      - name: Restart K8 Deployment
+        id: kubectl
+        uses: ianbelcher/eks-kubectl-action@master
+        with:
+          cluster_name: ${{ secrets.CLUSTER_NAME_PRODUCTION }}
+          args: rollout restart deployment/${{ secrets.DEPLOYMENT_NAME_PRODUCTION }}  -n ${{ secrets.NAMESPACE_PRODUCTION }}

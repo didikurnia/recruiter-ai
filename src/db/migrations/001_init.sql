@@ -1,7 +1,3 @@
--- Enable pgvector extension
--- Required for storing and querying vector embeddings (job knowledge base RAG)
-CREATE EXTENSION IF NOT EXISTS vector;
-
 -- Grammy session persistence table
 -- Stores serialized SessionData (language, FSM state) keyed by chat_id
 CREATE TABLE IF NOT EXISTS bot_sessions (

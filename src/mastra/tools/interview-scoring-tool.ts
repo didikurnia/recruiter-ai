@@ -15,7 +15,7 @@ import { google } from 'googleapis'
 import { generateObject } from 'ai'
 import { openai } from '@ai-sdk/openai'
 import { z } from 'zod'
-import { env } from '../../config/env'
+import { env, parseGoogleKey } from '../../config/env'
 import { logger } from '../../logger'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -47,7 +47,7 @@ export interface InterviewScoreResult {
 // ─── Google Sheets auth ───────────────────────────────────────────────────────
 
 function createSheetsClient() {
-  const key = env.GOOGLE_PRIVATE_KEY.split('\\n').join('\n')
+  const key = parseGoogleKey()
   const auth = new google.auth.JWT({
     email: env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
     key,

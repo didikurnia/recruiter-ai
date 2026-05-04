@@ -8,7 +8,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { google } from 'googleapis'
-import { env } from '../../config/env'
+import { env, parseGoogleKey } from '../../config/env'
 import { writeToSheets } from '../../mastra/tools/sheets-tool'
 import { uploadToDrive } from '../../mastra/tools/drive-upload'
 import { scoreInterviewTranscript, formatScoreDetail } from '../../mastra/tools/interview-scoring-tool'
@@ -60,7 +60,7 @@ async function fetchInterviewQuestions(): Promise<InterviewQuestion[]> {
   if (!spreadsheetId) return []
 
   try {
-    const key = env.GOOGLE_PRIVATE_KEY.split('\\n').join('\n')
+    const key = parseGoogleKey()
     const auth = new google.auth.JWT({
       email: env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
       key,
@@ -102,7 +102,7 @@ async function fetchCandidateFAQ(): Promise<CandidateFAQ[]> {
   if (!spreadsheetId) return []
 
   try {
-    const key = env.GOOGLE_PRIVATE_KEY.split('\\n').join('\n')
+    const key = parseGoogleKey()
     const auth = new google.auth.JWT({
       email: env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
       key,
@@ -332,9 +332,11 @@ export async function handleRealtimeSession(req: Request): Promise<Response> {
         input_audio_transcription: { model: 'whisper-1', language: lang === 'id' ? 'id' : undefined },
         turn_detection: {
           type: 'server_vad',
-          threshold: 0.5,
+          interrupt_response: false,
+          create_response: true,
+          threshold: 0.7,
+          silence_duration_ms: 900,
           prefix_padding_ms: 300,
-          silence_duration_ms: 700,
         },
       }),
     })

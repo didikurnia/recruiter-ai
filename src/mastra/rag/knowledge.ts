@@ -1,8 +1,11 @@
 import { createTool } from '@mastra/core/tools'
 import { openai } from '@ai-sdk/openai'
+import { PgVector } from '@mastra/pg'
 import { embed } from 'ai'
 import { z } from 'zod'
-import { pgVector } from '../index'
+import { env } from '../../config/env'
+
+const pgVector = new PgVector({ id: 'knowledge-query', connectionString: env.DATABASE_URL })
 
 export const INDEX_NAME = 'job_embeddings'
 export const EMBEDDING_MODEL = openai.embedding('text-embedding-3-small')

@@ -8,7 +8,7 @@
  *   /logout            → exit admin mode
  */
 import { InlineKeyboard } from 'grammy'
-import { env } from '../../config/env'
+import { env, parseGoogleKey } from '../../config/env'
 import { logger } from '../../logger'
 import type { BotContext } from '../middleware/session'
 
@@ -49,15 +49,16 @@ export async function handleAdminLogout(ctx: BotContext): Promise<void> {
   await ctx.reply('🚪 Logged out from admin mode.')
 }
 
-// ─── Sync Jobs ───────────────────────────────────────────────────────────────
+// ─── Sync Jobs (all sheets) ───────────────────────────────────────────────────
+
+const SKIP_SHEETS = ['Sheet5', 'AI Interview Question']
 
 export async function handleAdminSync(ctx: BotContext): Promise<void> {
   if (!ctx.session.isAdmin) return
   await ctx.answerCallbackQuery()
-  await ctx.reply('🔄 Syncing jobs from Google Sheets...')
+  await ctx.reply('🔄 Syncing knowledge base from ALL Google Sheets...')
 
   try {
-    // Dynamic import to avoid loading heavy deps at startup
     const { google } = await import('googleapis')
     const { MDocument } = await import('@mastra/rag')
     const { embed } = await import('ai')
@@ -66,29 +67,27 @@ export async function handleAdminSync(ctx: BotContext): Promise<void> {
     const { INDEX_NAME, EMBEDDING_DIMENSION } = await import('../../mastra/rag/knowledge')
 
     const spreadsheetId = env.GOOGLE_JOBS_SPREADSHEET_ID
-    const sheetName = env.GOOGLE_JOBS_SHEET_NAME ?? 'List Job'
-
     if (!spreadsheetId) {
       await ctx.reply('❌ GOOGLE_JOBS_SPREADSHEET_ID not configured.')
       return
     }
 
-    const key = env.GOOGLE_PRIVATE_KEY.split('\\n').join('\n')
+    const JOB_LIST_SHEET = env.GOOGLE_JOBS_SHEET_NAME ?? 'List Job'
+    const key = parseGoogleKey()
     const auth = new google.auth.JWT({
       email: env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
       key,
       scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
     })
     const sheets = google.sheets({ version: 'v4', auth })
-    const res = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${sheetName}!A:M` })
-    const rows = res.data.values ?? []
 
-    if (rows.length < 2) {
-      await ctx.reply('❌ No data rows found in sheet.')
-      return
-    }
+    // List all sheets, skip irrelevant ones
+    const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties.title' })
+    const sheetNames = (spreadsheet.data.sheets ?? [])
+      .map((s) => s.properties?.title ?? '')
+      .filter((name) => name && !SKIP_SHEETS.includes(name))
 
-    const jobs = rows.slice(1).filter((r: string[]) => r[0]?.trim())
+    await ctx.reply(`📋 Found ${sheetNames.length} sheet(s): ${sheetNames.join(', ')}`)
 
     const pgVector = new PgVector({ id: 'sync-vector', connectionString: env.DATABASE_URL })
     const indexes = await pgVector.listIndexes()
@@ -97,45 +96,86 @@ export async function handleAdminSync(ctx: BotContext): Promise<void> {
     }
 
     const embeddingModel = openai.embedding('text-embedding-3-small')
-    let indexed = 0
+    let totalDocs = 0
+    let totalSheets = 0
 
-    for (const r of jobs) {
-      const judul = r[0]?.trim() ?? ''
-      const lokasi = r[1]?.trim() ?? ''
-      const sim = r[5]?.trim() ?? '-'
-      const simText = sim && sim !== '-' ? ` SIM ${sim}.` : ''
+    for (const sheetName of sheetNames) {
+      const res = await sheets.spreadsheets.values.get({ spreadsheetId, range: `'${sheetName}'!A:Z` })
+      const rows = (res.data.values ?? []) as string[][]
+      if (rows.length < 2) continue
 
-      const text = [
-        `Posisi: ${judul}`,
-        `Lokasi: ${lokasi}`,
-        `Perusahaan/Client: ${r[3]?.trim() ?? ''}`,
-        `Role: ${r[7]?.trim() ?? ''}`,
-        `Deskripsi: ${r[2]?.trim() ?? ''}`,
-        `Persyaratan: Usia ${r[4]?.trim() ?? ''} tahun. Pendidikan ${r[6]?.trim() ?? ''}.${simText}`,
-        `Gaji: ${r[8]?.trim() ?? ''}`,
-        `Benefit: ${r[9]?.trim() ?? ''}`,
-        `Post Test: ${r[10]?.trim() || 'Tidak ada'}`,
-        `Recruiter: ${r[11]?.trim() ?? ''} (${r[12]?.trim() ?? ''})`,
-      ].join('\n')
+      // Build documents — List Job uses column positions, other sheets use header names
+      type Doc = { id_key: string; text: string; metadata: Record<string, string> }
+      const docs: Doc[] = []
 
-      const doc = MDocument.fromText(text, { judul_job: judul, lokasi })
-      await doc.chunkRecursive({ maxSize: 1000, overlap: 100 })
-      const chunks = await doc.chunk()
-
-      for (const chunk of chunks) {
-        const { embedding } = await embed({ model: embeddingModel, value: chunk.text })
-        await pgVector.upsert({
-          indexName: INDEX_NAME,
-          vectors: [embedding],
-          metadata: [{ ...chunk.metadata, text: chunk.text }],
-          deleteFilter: { judul_job: { $eq: judul }, lokasi: { $eq: lokasi } },
+      if (sheetName === JOB_LIST_SHEET) {
+        for (const r of rows.slice(1).filter((r) => r[0]?.trim())) {
+          const judul = r[0]?.trim() ?? ''
+          const lokasi = r[1]?.trim() ?? ''
+          const sim = r[5]?.trim() || '-'
+          const simText = sim !== '-' ? ` SIM ${sim}.` : ''
+          docs.push({
+            id_key: `${judul}::${lokasi}`,
+            text: [
+              `Posisi: ${judul}`,
+              `Lokasi: ${lokasi}`,
+              `Perusahaan/Client: ${r[3]?.trim() ?? ''}`,
+              `Role: ${r[7]?.trim() ?? ''}`,
+              `Deskripsi: ${r[2]?.trim() ?? ''}`,
+              `Persyaratan: Usia ${r[4]?.trim() ?? ''} tahun. Pendidikan ${r[6]?.trim() ?? ''}.${simText}`,
+              `Gaji: ${r[8]?.trim() ?? ''}`,
+              `Benefit: ${r[9]?.trim() ?? ''}`,
+              `Post Test: ${r[10]?.trim() || 'Tidak ada'}`,
+              `Recruiter: ${r[11]?.trim() ?? ''} (${r[12]?.trim() ?? ''})`,
+            ].join('\n'),
+            metadata: {
+              sheet_name: sheetName, judul_job: judul, lokasi,
+              client: r[3]?.trim() ?? '', role: r[7]?.trim() ?? '',
+              recruiter_name: r[11]?.trim() ?? '', recruitment_number: r[12]?.trim() ?? '',
+            },
+          })
+        }
+      } else {
+        const headers = (rows[0] ?? []).map((h) => h?.trim() ?? '')
+        rows.slice(1).forEach((r, i) => {
+          if (!r.some((c) => c?.trim())) return
+          const pairs = headers.map((h, idx) => ({ h, v: r[idx]?.trim() ?? '' })).filter(({ h, v }) => h && v)
+          const metadata: Record<string, string> = { sheet_name: sheetName }
+          pairs.forEach(({ h, v }) => { metadata[h.toLowerCase().replace(/\s+/g, '_')] = v })
+          docs.push({
+            id_key: `${sheetName}::${r[0]?.trim() ?? i}::${i}`,
+            text: [`Sheet: ${sheetName}`, ...pairs.map(({ h, v }) => `${h}: ${v}`)].join('\n'),
+            metadata,
+          })
         })
       }
-      indexed++
+
+      // Embed & upsert each document
+      for (const doc of docs) {
+        const mdoc = MDocument.fromText(doc.text, doc.metadata)
+        await mdoc.chunkRecursive({ maxSize: 1000, overlap: 100 })
+        const chunks = await mdoc.chunk()
+        for (const chunk of chunks) {
+          const { embedding } = await embed({ model: embeddingModel, value: chunk.text })
+          await pgVector.upsert({
+            indexName: INDEX_NAME,
+            vectors: [embedding],
+            metadata: [{ ...chunk.metadata, text: chunk.text }],
+            deleteFilter: { sheet_name: { $eq: sheetName }, id_key: { $eq: doc.id_key } },
+          })
+        }
+      }
+
+      totalDocs += docs.length
+      totalSheets++
+      await ctx.reply(`✅ '${sheetName}' — ${docs.length} doc(s) indexed`)
     }
 
-    logger.info({ event: 'admin_sync_done', count: indexed })
-    await ctx.reply(`✅ Synced *${indexed} jobs* from Google Sheets.`, { parse_mode: 'Markdown' })
+    logger.info({ event: 'admin_sync_all_done', sheets: totalSheets, docs: totalDocs })
+    await ctx.reply(
+      `🎉 *Sync complete!*\n📋 ${totalSheets} sheet(s)\n📄 ${totalDocs} document(s) indexed into RAG`,
+      { parse_mode: 'Markdown' }
+    )
   } catch (err) {
     logger.error({ event: 'admin_sync_error', err })
     await ctx.reply(`❌ Sync failed: ${err}`)

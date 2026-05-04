@@ -39,3 +39,18 @@ if (!parsed.success) {
 
 export const env = parsed.data
 export type Env = typeof env
+
+/**
+ * Returns the Google service account private key with proper PEM newlines.
+ * Handles both formats found in .env files:
+ *   - Literal \n characters (unquoted value or dotenv without escape processing)
+ *   - Actual newlines (Bun already processed quoted string escape sequences)
+ *   - Windows CRLF that can corrupt the key
+ */
+export function parseGoogleKey(): string {
+  const raw = env.GOOGLE_PRIVATE_KEY
+  return raw
+    .replace(/\r/g, '')          // strip carriage returns (Windows CRLF)
+    .replace(/\\n/g, '\n')       // literal \n → actual newline
+    .trim()
+}

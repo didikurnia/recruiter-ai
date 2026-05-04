@@ -3,7 +3,7 @@
  * Cached for 5 minutes to avoid hitting Sheets API on every message.
  */
 import { google } from 'googleapis'
-import { env } from '../../config/env'
+import { env, parseGoogleKey } from '../../config/env'
 import { logger } from '../../logger'
 
 export interface BotResponse {
@@ -16,7 +16,7 @@ export interface BotResponse {
 let cache: { data: BotResponse[]; expires: number } = { data: [], expires: 0 }
 
 function getAuth() {
-  const key = env.GOOGLE_PRIVATE_KEY.split('\\n').join('\n')
+  const key = parseGoogleKey()
   return new google.auth.JWT({
     email: env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
     key,

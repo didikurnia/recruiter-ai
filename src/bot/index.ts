@@ -3,6 +3,7 @@ import { env } from '../config/env'
 import { logger } from '../logger'
 import { createSessionMiddleware, type BotContext } from './middleware/session'
 import { requireSession } from './middleware/guard'
+import { rateLimitMiddleware } from './middleware/rate-limit'
 import { startCommand } from './commands/start'
 // Language selection removed — Indonesian only
 import { handleCandidateMessage } from './handlers/ask'
@@ -25,6 +26,7 @@ import { FsmState } from '../types/candidate'
 export const bot = new Bot<BotContext>(env.TELEGRAM_BOT_TOKEN)
 
 bot.use(createSessionMiddleware(new PostgresSessionStorage()))
+bot.use(rateLimitMiddleware)
 bot.use(requireSession)
 
 // ─── Commands ─────────────────────────────────────────────────────────────────

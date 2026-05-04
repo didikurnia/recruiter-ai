@@ -449,12 +449,22 @@ export async function handleRealtimeComplete(req: Request): Promise<Response> {
     logger.error({ event: 'interview_scoring_error', chat_id, err })
   }
 
-  // ── Notify candidate ─────────────────────────────────────────────────────────
-  try {
-    const msg = `✅ *AI Interview selesai!*\n\n⏱ Durasi: ${durationMin} menit\n💬 ${transcript.length} pertanyaan & jawaban\n\n_"Terima kasih telah meluangkan waktu untuk mengikuti proses interview ini. Tim kami akan segera menghubungi Anda untuk informasi mengenai proses selanjutnya. Semoga sukses! 🙏"_`
-    await bot.api.sendMessage(chat_id, msg, { parse_mode: 'Markdown' })
-  } catch (err) {
-    logger.error({ event: 'realtime_notify_error', chat_id, err })
+  // ── Mark web session completed (persists on page reload) ─────────────────────
+  if (chat_id.startsWith('web-')) {
+    const { getOrCreateSession, saveSession } = await import('../../web/session')
+    const webSess = getOrCreateSession(chat_id)
+    webSess.state = 'interview_completed'
+    saveSession(webSess)
+  }
+
+  // ── Notify candidate (Telegram only) ─────────────────────────────────────────
+  if (!chat_id.startsWith('web-')) {
+    try {
+      const msg = `✅ *AI Interview selesai!*\n\n⏱ Durasi: ${durationMin} menit\n💬 ${transcript.length} pertanyaan & jawaban\n\n_"Terima kasih telah meluangkan waktu untuk mengikuti proses interview ini. Tim kami akan segera menghubungi Anda untuk informasi mengenai proses selanjutnya. Semoga sukses! 🙏"_`
+      await bot.api.sendMessage(chat_id, msg, { parse_mode: 'Markdown' })
+    } catch (err) {
+      logger.error({ event: 'realtime_notify_error', chat_id, err })
+    }
   }
 
   return Response.json({

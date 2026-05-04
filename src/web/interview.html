@@ -309,6 +309,11 @@
           ? `<p>Interview selesai! Terima kasih ${name}.</p><p>Anda bisa menutup halaman ini.</p>`
           : `<p>Interview complete! Thank you ${name}.</p><p>You can close this page.</p>`;
 
+        // Notify the chat page (same browser, different tab) via BroadcastChannel
+        const bc = new BroadcastChannel('hireai_interview');
+        bc.postMessage({ type: 'interview_complete', sessionId: chatId });
+        bc.close();
+
         // Close Telegram Mini App after a short delay
         if (tg) setTimeout(() => tg.close(), 3000);
       } catch (err) {

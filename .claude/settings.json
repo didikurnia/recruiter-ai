@@ -28,7 +28,8 @@
       "Bash(npx nuxi *)",
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d.get\\('message',''\\)\\)\")",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3001/chat)",
-      "Bash(powershell -Command \"Get-Process -Name 'node','bun' -ErrorAction SilentlyContinue | Stop-Process -Force\")"
+      "Bash(powershell -Command \"Get-Process -Name 'node','bun' -ErrorAction SilentlyContinue | Stop-Process -Force\")",
+      "Bash(kubectl -n myrobin-dev-namespace exec *)"
     ],
     "additionalDirectories": [
       "f:\\backend\\recruiter-web"

@@ -42,15 +42,27 @@ export type Env = typeof env
 
 /**
  * Returns the Google service account private key with proper PEM newlines.
- * Handles both formats found in .env files:
- *   - Literal \n characters (unquoted value or dotenv without escape processing)
- *   - Actual newlines (Bun already processed quoted string escape sequences)
- *   - Windows CRLF that can corrupt the key
+ * Handles all formats seen in .env files and K8s secrets:
+ *   - Surrounding quotes added by some secret managers
+ *   - Double-escaped \\n (JSON-within-JSON or some K8s secret tools)
+ *   - Single-escaped \n (standard JSON / kubectl --from-literal)
+ *   - Actual newlines (Bun already processed quoted string, or secret from file)
+ *   - Windows CRLF line endings
  */
 export function parseGoogleKey(): string {
-  const raw = env.GOOGLE_PRIVATE_KEY
-  return raw
-    .replace(/\r/g, '')          // strip carriage returns (Windows CRLF)
-    .replace(/\\n/g, '\n')       // literal \n → actual newline
-    .trim()
+  let raw = env.GOOGLE_PRIVATE_KEY
+
+  // Strip surrounding quotes added by some secret managers or kubectl
+  if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) {
+    raw = raw.slice(1, -1)
+  }
+
+  // Normalize line endings: handle double-escaped first, then single-escaped, then CRLF
+  raw = raw
+    .replace(/\\\\n/g, '\n')   // double-escaped \\n → newline
+    .replace(/\\n/g, '\n')     // single-escaped \n → newline
+    .replace(/\r\n/g, '\n')    // Windows CRLF → LF
+    .replace(/\r/g, '\n')      // stray CR → LF
+
+  return raw.trim()
 }
